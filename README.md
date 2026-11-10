@@ -1,46 +1,47 @@
-# /media - Claude Code Skill for AI Image & Video Generation
+# /media - Claude Code Skill for AI Image Generation & Editing
 
-A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) custom skill that generates images and videos directly from your terminal using Google's Gemini API.
+A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) custom skill that generates and edits images directly from your terminal using the OpenAI Images API.
 
 Type `/media` in Claude Code and describe what you want to create.
 
 ## What It Does
 
-- **Image Generation** via `gemini-3.1-flash-image-preview` (Nano Banana 2) - Google's high-efficiency image generation model
-- **Video Generation** via `veo-3.0-generate-preview` (Veo 3) - Google's video generation model
+- **Image Generation** via `gpt-image-2.6-flare` (default, fast) or `gpt-image-2.6-sunburst` (`hq`, higher quality)
+- **Image Editing**: pass one or more existing images plus an instruction
+
+> Video generation is not supported yet.
 
 ## Usage
 
 ```
 /media image a futuristic city at sunset
-/media video ocean waves crashing on rocks
-/media image portrait a woman in traditional clothing
+/media image hq portrait a woman in traditional clothing
 /media image square a minimalist logo design
+/media edit photo.png make the sky purple
+/media edit cat.png hat.png put the hat on the cat
 ```
 
-### Aspect Ratios (Images)
+### Options
 
-The skill auto-detects aspect ratio from your prompt:
-
-| Keyword | Ratio | Use Case |
-|---------|-------|----------|
-| _(default)_ | 16:9 | Landscape |
-| `portrait`, `vertical`, `mobile` | 9:16 | Phone wallpapers, stories |
-| `square` | 1:1 | Social media, avatars |
-| `4:3` | 4:3 | Standard photos |
+| Keyword | Effect |
+|---------|--------|
+| _(default)_ | `gpt-image-2.6-flare`, landscape 1536x1024 |
+| `hq`, `high quality`, `best` | `gpt-image-2.6-sunburst`, high quality |
+| `portrait`, `vertical`, `mobile` | 1024x1536 |
+| `square` | 1024x1024 |
 
 ## Installation
 
-### 1. Get a Gemini API Key
+### 1. Get an OpenAI API Key
 
-Go to [Google AI Studio](https://aistudio.google.com/apikey) and create a free API key.
+Create one at [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
 
 ### 2. Set the Environment Variable
 
 Add to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
 
 ```bash
-export GEMINI_API_KEY="your-api-key-here"
+export OPENAI_API_KEY="your-api-key-here"
 ```
 
 Then reload: `source ~/.zshrc`
@@ -70,9 +71,9 @@ Open Claude Code and type `/media` - it should appear in the skill autocomplete.
 
 ## How It Works
 
-1. You run `/media image <prompt>` or `/media video <prompt>`
-2. Claude calls the Gemini API via REST (curl)
-3. The response (base64-encoded image or video) is decoded and saved to your current directory
+1. You run `/media image <prompt>` or `/media edit <file> <prompt>`
+2. Claude calls the OpenAI Images API via REST (curl)
+3. The base64-encoded image is decoded and saved to your current directory
 4. The file opens automatically on macOS
 
 No dependencies required beyond `curl` and `python3` (both pre-installed on macOS/Linux).
@@ -81,18 +82,18 @@ No dependencies required beyond `curl` and `python3` (both pre-installed on macO
 
 | Model | ID | Use |
 |-------|----|-----|
-| **Nano Banana 2** | `gemini-3.1-flash-image-preview` | Fast, high-quality image generation |
-| **Veo 3** | `veo-3.0-generate-preview` | Video generation (async, takes ~1-2 min) |
+| **GPT Image 2.6 Flare** | `gpt-image-2.6-flare` | Default, fast (~7s) |
+| **GPT Image 2.6 Sunburst** | `gpt-image-2.6-sunburst` | `hq` mode, higher quality (~25s) |
 
 ## Requirements
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
-- A [Google Gemini API key](https://aistudio.google.com/apikey) (free tier available)
+- An [OpenAI API key](https://platform.openai.com/api-keys) with access to the models above
 - `curl` and `python3` (pre-installed on macOS/Linux)
 
 ## Example Output
 
-Prompt: `/media image bulgarian revolutional woman from 1888 looking at the camera`
+Prompt: `/media image hq bulgarian revolutional woman from 1888 looking at the camera`
 
 <img src="example.png" width="600" alt="Example generated image">
 

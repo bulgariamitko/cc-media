@@ -1,159 +1,124 @@
 ---
 name: media
-description: Generate images and videos using Google Gemini API (Nano Banana 2 for images, Veo 3 for videos)
-argument-hint: <image|video> <prompt> [options]
+description: Generate and edit images using the OpenAI Images API (gpt-image-2.6-flare by default, gpt-image-2.6-sunburst for high quality)
+argument-hint: <image|edit> [fast|hq] [portrait|square|landscape] <prompt | file... prompt>
 allowed-tools: Bash, Read, Write, Glob
 ---
 
-# Media Generation Skill
+# Media Generation Skill (OpenAI)
 
-Generate images and videos using Google's Gemini API models.
+Generate new images or edit existing ones with OpenAI's image models. OpenAI only, never call Google or any other provider.
 
 ## Usage
 
 ```
 /media image A beautiful sunset over the ocean
-/media video A cat playing with a ball of yarn
+/media image hq portrait a woman in traditional clothing
+/media edit photo.png make the sky purple
+/media edit cat.png hat.png put the hat on the cat
 ```
 
 ## Models
 
-- **Images**: `gemini-3.1-flash-image-preview` (Nano Banana 2) - fast, high-quality image generation
-- **Videos**: `veo-3.0-generate-preview` (Veo 3) - video generation
+| Mode | Model | Speed |
+|------|-------|-------|
+| default | `gpt-image-2.6-flare` | ~7s, fast |
+| `hq` (also "high quality", "best", "sunburst") | `gpt-image-2.6-sunburst` | ~25s, higher quality |
+
+The API key is in the `$OPENAI_API_KEY` environment variable. Never print it or hardcode it.
 
 ## How to Process
 
 ### Step 1: Parse Arguments
 
-`$ARGUMENTS` contains the full command. The first word is the type (`image` or `video`), the rest is the prompt.
+`$ARGUMENTS` holds the full command.
 
-If the user doesn't specify a type, ask them whether they want an image or a video.
+- First word is the action: `image` (generate) or `edit`. If it is missing, but the arguments mention an existing image file, treat it as `edit`. Otherwise treat it as `image`.
+- Optional modifiers anywhere before the prompt:
+  - `hq` / `high quality` / `best` → model `gpt-image-2.6-sunburst`, quality `high`
+  - `fast` → model `gpt-image-2.6-flare` (already the default)
+  - Otherwise: model `gpt-image-2.6-flare`, quality `medium`
+- Size:
+  - `portrait`, `vertical`, `mobile`, `9:16`, `3:4` → `1024x1536`
+  - `square`, `1:1`, `logo`, `avatar`, `icon` → `1024x1024`
+  - `landscape`, `16:9`, `4:3`, or nothing specified → `1536x1024`
+  - For `edit` with nothing specified → `auto` (keeps the input's shape)
+- For `edit`: the words that are existing file paths (check with Glob/ls) are the input images (up to 16; png, jpg or webp). The rest is the prompt. If there is no input file, ask the user which image to edit.
 
-### Step 2: Generate
+If the prompt is empty, ask the user what they want.
 
-#### For Images
+### Step 2: Call the API
 
-Use curl to call the Gemini API. The API key is available as `$GEMINI_API_KEY` environment variable.
+Write the response to a temp file (base64 output is large, so don't keep it in a shell variable). Build JSON with python so quotes in the prompt are escaped safely.
 
-```bash
-curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [{
-      "parts": [{"text": "Generate an image: PROMPT_HERE"}]
-    }],
-    "generationConfig": {
-      "responseModalities": ["image", "text"],
-      "imageConfig": {
-        "aspectRatio": "16:9"
-      }
-    }
-  }'
-```
-
-**Response handling**: The response JSON contains `candidates[0].content.parts[]`. Look for parts with `inlineData` containing `mimeType` (e.g. `image/png`) and `data` (base64-encoded image). Decode and save to a file.
-
-Use this bash pattern to extract and save:
+#### Generate (`image`)
 
 ```bash
-# Save response to temp file, then extract base64 image data
-RESPONSE=$(curl -s ...)
-echo "$RESPONSE" | python3 -c "
-import json, sys, base64
-data = json.load(sys.stdin)
-for part in data.get('candidates', [{}])[0].get('content', {}).get('parts', []):
-    if 'inlineData' in part:
-        img_data = base64.b64decode(part['inlineData']['data'])
-        mime = part['inlineData']['mimeType']
-        ext = 'png' if 'png' in mime else 'jpg' if 'jpeg' in mime else 'webp'
-        with open('OUTPUT_FILENAME.' + ext, 'wb') as f:
-            f.write(img_data)
-        print(f'Saved: OUTPUT_FILENAME.{ext}')
-    elif 'text' in part:
-        print(part['text'])
-"
+TMP=$(mktemp -t media)
+python3 -c 'import json,sys; print(json.dumps({"model":sys.argv[1],"prompt":sys.argv[2],"size":sys.argv[3],"quality":sys.argv[4]}))' \
+  "MODEL" "PROMPT" "SIZE" "QUALITY" \
+| curl -s https://api.openai.com/v1/images/generations \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d @- -o "$TMP"
 ```
 
-#### For Videos
+#### Edit (`edit`)
 
-Use Veo 3 for video generation. This is an async operation:
+Multipart form. Repeat `-F "image[]=@FILE"` for each input image:
 
-**Step 1 - Start generation:**
 ```bash
-curl -s "https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-preview:predictLongRunning" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "instances": [{
-      "prompt": "PROMPT_HERE"
-    }],
-    "parameters": {
-      "sampleCount": 1
-    }
-  }'
+TMP=$(mktemp -t media)
+curl -s https://api.openai.com/v1/images/edits \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -F model="MODEL" \
+  -F "image[]=@INPUT_FILE" \
+  -F prompt="PROMPT" \
+  -F size="SIZE" \
+  -F quality="QUALITY" \
+  -o "$TMP"
 ```
 
-If the predictLongRunning endpoint doesn't work, try the generateVideos endpoint:
-```bash
-curl -s "https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-preview:generateVideos" \
-  -H "x-goog-api-key: $GEMINI_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -X POST \
-  -d '{
-    "contents": [{
-      "parts": [{"text": "PROMPT_HERE"}]
-    }]
-  }'
-```
-
-**Step 2 - Poll for completion** using the operation name from the response:
-```bash
-curl -s "https://generativelanguage.googleapis.com/v1beta/OPERATION_NAME" \
-  -H "x-goog-api-key: $GEMINI_API_KEY"
-```
-
-Poll every 10 seconds until `done: true`. Then extract and save the video.
+(Escape any double quotes in PROMPT for the `-F prompt=` value.)
 
 ### Step 3: Save Output
 
-- Save files to the **current working directory**
-- Use descriptive filenames based on the prompt (e.g., `sunset_ocean.png`)
-- Keep filenames short, lowercase, with underscores
-- Show the user the saved file path
-- If on macOS, offer to open the file with `open <filename>`
+Pick a short, lowercase, underscore filename based on the prompt (e.g. `sunset_ocean`). Save in the **current working directory**. Don't overwrite: if the file exists, add `_2`, `_3`, and so on.
+
+```bash
+python3 - "$TMP" "OUTPUT_BASENAME" <<'EOF'
+import json, sys, base64, os
+path, base = sys.argv[1], sys.argv[2]
+d = json.load(open(path))
+if "error" in d:
+    print("ERROR:", d["error"].get("message"), f"({d['error'].get('code')})"); sys.exit(1)
+ext = d.get("output_format", "png")
+for i, item in enumerate(d["data"]):
+    name = f"{base}{'' if i == 0 else f'_{i+1}'}.{ext}"
+    n = 2
+    while os.path.exists(name):
+        name = f"{base}_{n}.{ext}"; n += 1
+    open(name, "wb").write(base64.b64decode(item["b64_json"]))
+    print("Saved:", os.path.abspath(name))
+    if item.get("revised_prompt"): print("Revised prompt:", item["revised_prompt"])
+EOF
+rm -f "$TMP"
+```
 
 ### Step 4: Show Result
 
-After saving:
-1. Tell the user the file was saved and where
-2. Show any text response from the model
-3. Open the file automatically on macOS with `open <filename>`
-
-## Aspect Ratio Options
-
-For images, the user can specify aspect ratio. Supported values:
-- `1:1` (square)
-- `16:9` (landscape, default)
-- `9:16` (portrait/mobile)
-- `4:3` (standard)
-- `3:4` (portrait standard)
-
-If the user mentions "portrait", "vertical", or "mobile" use `9:16`.
-If the user mentions "square" use `1:1`.
-Otherwise default to `16:9`.
+1. Tell the user the full path of the saved file, plus the model and size used.
+2. On macOS, open it with `open <filename>`.
 
 ## Error Handling
 
-- If the API returns an error, show the error message to the user
-- Common errors: invalid API key, quota exceeded, content policy violation
-- If content is blocked by safety filters, inform the user and suggest rephrasing
+- `OPENAI_API_KEY` empty → tell the user to set it (`export OPENAI_API_KEY=...` in `~/.zshrc`).
+- `invalid_api_key` / 401 → the key is wrong or revoked.
+- "model ... does not exist" (`invalid_value` / `model_not_found`) → the account can't use that model. Run `curl -s https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"` and pick the newest `gpt-image-*` model that is available.
+- `moderation_blocked` / safety rejection → say the prompt was blocked and suggest rephrasing.
+- `rate_limit_exceeded` / `insufficient_quota` → show the message. Don't retry in a loop.
 
-## Important Notes
+## Notes
 
-- Never hardcode the API key - always use `$GEMINI_API_KEY` from environment
-- The image model returns base64-encoded image data inline
-- Video generation is async and may take 1-2 minutes
-- Always clean up temporary files
+- This skill supports images only. Video is not supported yet.
+- Always remove temp files.
